@@ -47,6 +47,14 @@ class FixedSizeInlineVector {
   const_iterator end() const { return cend(); }
   const_iterator cend() const { return &values_[size_]; }
 
+  reverse_iterator rbegin() { return std::reverse_iterator(end()); }
+  const_reverse_iterator rbegin() const { return crbegin(); }
+  const_reverse_iterator crbegin() const { return std::reverse_iterator(cend()); }
+
+  reverse_iterator rend() { return std::reverse_iterator(begin()); }
+  const_reverse_iterator rend() const { return crend(); }
+  const_reverse_iterator crend() const { return std::reverse_iterator(cbegin()); }
+
   bool empty() const { return size_ == 0; }
   size_t size() const { return size_; }
   size_t max_size() const { return vec_capacity; }
