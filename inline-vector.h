@@ -1,17 +1,15 @@
 #ifndef INLINE_VECTOR_H_
 #define INLINE_VECTOR_H_
 
+#include <cassert>
 #include <cstddef>
 #include <iterator>
+#include <utility>
 
 namespace ivec {
 
-namespace ivec_internal {
-
-}  // namespace ivec_internal
-
 // A vector that can grow only to a particular capacity.
-template <class T, size_t capacity>
+template <class T, size_t vec_capacity>
 class FixedSizeInlineVector {
  public:
   // Standard member types provided by std::vector
@@ -20,8 +18,8 @@ class FixedSizeInlineVector {
   using difference_type = ptrdiff_t;
   using reference = value_type&;
   using const_reference = const value_type&;
-  using iterator = ivec_internal::PointerIteratorImplementation<T, false>;
-  using const_iterator = PointerIteratorImplementation<T, true>;
+  using iterator = value_type*;
+  using const_iterator = const value_type*;
   using reverse_iterator = std::reverse_iterator<iterator>;
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
   // Returns a reference to the pos'th value.  Unlike std::vector, doesn't throw
@@ -41,99 +39,115 @@ class FixedSizeInlineVector {
   value_type* data() noexcept { return values_; }
   value_type* data() const noexcept { return values_; }
 
-  iterator begin() { return iterator(&values_[0]); }
+  iterator begin() { return &values_[0]; }
+  const_iterator begin() const { return cbegin(); }
+  const_iterator cbegin() const { return &values_[0]; }
+
+  iterator end() { return &values_[size_]; }
+  const_iterator end() const { return cend(); }
+  const_iterator cend() const { return &values_[size_]; }
 
   bool empty() const { return size_ == 0; }
+  size_t size() const { return size_; }
+  size_t max_size() const { return vec_capacity; }
+  // Does nothing.
+  void reserve(size_t) const {}
+  size_t capacity () const { return vec_capacity; }
+  // Does nothing.
+  void shrink_to_fit(size_t) const {}
+  void clear() {
+    // Set all the elements to the default constructed vale.
+    while (size_ > 0) {
+      T tmp;
+      --size_;
+      std::swap(tmp, values_[size_]);
+    }
+  }
+  iterator insert(const_iterator pos, const T& value) {
+    iterator iter;
+    for (iter = values_[vec_capacity]; iter != pos + 1; --iter) {
+      *(iter - 2) = std::move(*(iter - 1));
+    }
+    *(iter - 1) = std::move(value);
+    return iter-1;
+  }
+  iterator insert(const_iterator pos, T&& value) {
+    iterator iter;
+    for (iter = values_[vec_capacity]; iter != pos + 1; --iter) {
+      *(iter-2) = std::move(*(iter-1));
+    }
+    *(iter-1) = std::forward(value);
+    return iter-1;
+  }
+  iterator insert(const_iterator pos, size_t count, const T& value) {
+    iterator iter;
+    for (iter = values_[vec_capacity]; iter > pos + count; --iter) {
+      *(iter - 1 - count) = std::move(*(iter - count));
+    }
+    while (iter > pos) {
+      *(iter - 1) = value;
+      --iter;
+    }
+    return iter;
+  }
+  // TODO: Implement cases 4 and 5 of insert
+  // TODO: Implement emplace
+  // TODO: Implement erase
+#if 0
+  void push_back(const value_type& value) {
+    assert(size_ < capacity());
+    values_[size_++] = value;
+  }
+  void push_back(value_type&& value) {
+    assert(size_ < capacity());
+    values_[size_++] = std::forward(value);
+  }
+#endif
+  void push_back(value_type value) {
+    assert(size_ < capacity());
+    values_[size_++] = std::move(value);
+  }
+  // TODO: Implement emplace_back, pop_back
+  void resize(size_t count) {
+    assert(count < capacity());
+    if (size_ < count) {
+      // All the intermediate values are already value initialized.
+      size_ = count;
+    } else {
+      while (size_ > count) {
+        T tmp;
+        --size_;
+        std::swap(tmp, values_[size_]);
+      }
+    }
+  };
+  // Unlike std::vector::swap, swapping these elements does invoke swap operations on individual elements.
+#if 0
+  void swap(FixedSizeInlineVector& other) {
+    std::swap(size_, other.size_);
+    size_t max = std::max(size_, other.size_);
+    for (size_t i = 0; i < max; ++i) {
+      std::swap(values_[i], other.values_[i]);
+    }
+  }
+#endif
+  friend bool operator==(const FixedSizeInlineVector& a, 
+                         const FixedSizeInlineVector& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+      if (!(a[i] == b[i])) return false;
+    }
+    return true;
+  }
+  friend std::strong_ordering operator<=>(const FixedSizeInlineVector& a, 
+                                          const FixedSizeInlineVector& b) {
+    return std::lexicographical_compare_three_way(a.begin(), a.end(),
+                                                  b.begin(), b.end());
+  }
+
  private: 
   size_t size_ = 0;
-  value_type values_[capacity];
-};
-
-template <class T, bool is_const>
-class FixedSizeInlineIteratorImplementation {
-  using Iter = FixedSizeInlineIteratorImplementation;
- public:
-  using iterator_category = std::random_access_iterator_tag;
-  using value_type = T;
-  using difference_type = ptrdiff_t;
-  using pointer = typename std::conditional<is_const,
-                                            const value_type*,
-                                            value_type*>::type;
-  using reference = typename std::conditional<is_const,
-                                              const value_type&,
-                                              value_type&>::type;
-  // Conversion operator from any iterator to const_iterator.  This allows you
-  // do do pass an iterator to a method that accepts a const_iterator without an
-  // explicit conversion.  Most implicit conversions are frowned upon (e.g., by
-  // the Google style guide), but this conversion is idiomatic in C++.
-  operator FixedSizeInlineIteratorImplementation<T, true>() const { 
-    return FixedSizeInlineIteratorImplementation<T, true>(pointer_);
-  }
-  // Prefix increment / decrement
-  Iter& operator++() {
-    ++pointer_;
-    return *this;
-  }
-  Iter& operator--() {
-    ++pointer_;
-    return *this;
-  }
-  // Postfix increment / decrement
-  Iter operator++(int) {
-    Iter old = *this;
-    ++pointer_;
-    return old;
-  }
-  Iter operator--(int) {
-    Iter old = *this;
-    --pointer_;
-    return old;
-  }
-  Iter& operator+=(ptrdiff_t n) {
-    pointer_ += n;
-    return *this;
-  }
-  Iter& operator-=(ptrdiff_t n) {
-    pointer_ -= n;
-    return *this;
-  }
-  friend Iter operator+(Iter a, ptrdiff_t n) {
-    a.pointer_ += n;
-    return a;
-  }
-  friend Iter operator+(ptrdiff_t n, Iter a) {
-    a.pointer_ += n;
-    return a;
-  }
-  friend Iter operator-(Iter a, ptrdiff_t n) {
-    a.pointer_ -= n;
-    return a;
-  }
-  friend ptrdiff_t  operator-(Iter a, Iter b) {
-    return a.pointer_ - b.pointer;
-  }
-  reference operator*() const { return *pointer_; }
-  pointer operator->() const { return pointer_; }
-  reference& operator[](size_t i) {
-    return *(pointer_ + i);
-  }
-  friend bool operator<(Iter a, Iter b) {
-    return a.pointer_ < b.pointer;
-  }
-  friend bool operator>(Iter a, Iter b) {
-    return a.pointer_ > b.pointer;
-  }
-  friend bool operator<=(Iter a, Iter b) {
-    return a.pointer_ <= b.pointer;
-  }
-  friend bool operator>=(Iter a, Iter b) {
-    return a.pointer_ >= b.pointer;
-  }
-  friend bool operator==(Iter a, Iter b) {
-    return a.pointer_ == b.pointer;
-  }
- private:
-  pointer pointer_;
+  value_type values_[vec_capacity];
 };
 
 }  // namespace ivec
