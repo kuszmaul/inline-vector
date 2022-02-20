@@ -143,39 +143,200 @@ static void test_fixed_compare() {
   assert(b1 >= a0);
 }
 
-static size_t destruction_count = 0;
+#if 0
+static size_t object_count = 0;
+static size_t total_weight = 0;
 
-struct CountDestructions {
-  explicit CountDestructions(bool count_destruction = false)
-      :count_destruction(count_destruction) {}
-  ~CountDestructions() {
-    if (count_destruction){
-      ++destruction_count;
-    }
+class WeightedObject {
+ public:
+  WeightedObject(size_t weight = 0) :weight(weight) {
+    ++object_count;
+    total_weight += weight;
+    std::cout << "construct oc=" << object_count << std::endl;
   }
-  bool count_destruction;
+  // copy constructor
+  WeightedObject(const WeightedObject& v) :weight(v.weight) {
+    ++object_count;
+    total_weight += v.weight;
+    std::cout << "cc " << v.weight << " oc=" << object_count << std::endl;
+  }
+  // move constructor
+  WeightedObject(WeightedObject&& v) {
+    weight = v.weight;
+    total_weight += weight;
+  }
+  // copy assignment
+  WeightedObject& operator=(const WeightedObject& v) {
+    std::cout << "operator= old_weight=" << weight << std::endl;
+    total_weight -= weight;
+    weight = v.weight;
+    total_weight += weight;
+    std::cout << " operator= new oc=" << object_count << std::endl;
+    return *this;
+  }
+  ~WeightedObject() {
+    --object_count;
+    total_weight -= weight;
+    std::cout << "Destruct oc=" << object_count << std::endl;
+  }
+ private:
+  size_t weight;
 };
 
-static void test_clear() {
+static void test_fixed_clear() {
   {
-    ivec::FixedSizeInlineVector<CountDestructions, 3> b;
-    b.push_back(CountDestructions{true});
-    b.push_back(CountDestructions{true});
-    destruction_count = 0;
+    ivec::FixedSizeInlineVector<WeightedObject, 3> b;
+    assert(object_count == 3);
+    assert(total_weight == 0);
+    std::cout << "Doing push back 10" << std::endl;
+    b.push_back(WeightedObject(10));
+    std::cout << "Doing push back 12" << std::endl;
+    b.push_back(WeightedObject(12));
+    assert(object_count == 3);
+    assert(total_weight == 22);
   }
-  assert(destruction_count == 2);
+  assert(object_count == 0);
+  assert(total_weight == 0);
   {
-    ivec::FixedSizeInlineVector<CountDestructions, 3> b;
-    b.push_back(CountDestructions{true});
-    b.push_back(CountDestructions{true});
-    destruction_count = 0;
+    ivec::FixedSizeInlineVector<WeightedObject, 3> b;
+    b.push_back(WeightedObject(10));
+    b.push_back(WeightedObject(12));
     // make sure the clear actually destructs the items that were cleared with
     // default items (which won't count).
+    std::cout << "just before clear: oc=" << object_count << " tw=" << total_weight << std::endl;
     b.clear();
-    assert(destruction_count == 2);
+    std::cout << "after oc=" << object_count << " tw=" << total_weight << std::endl;
+    assert(object_count == 3);
+    assert(total_weight == 0);
     assert(b.empty());
   }
-  assert(destruction_count == 2);
+  assert(object_count == 0);
+}
+#endif
+
+// Makes sure that clear() (and push_back) reset the unused slots to default
+// initialization.
+static void test_fixed_clear() {
+  ivec::FixedSizeInlineVector<std::string, 3> b;
+  // This is a transparent-box test: We know we can access off the end since the
+  // capacity is 3.
+  assert(b.at(0).empty());
+  assert(b.at(1).empty());
+  assert(b.at(2).empty());
+  b.push_back("a");
+  b.push_back("b");
+  b.push_back("c");
+  assert(b.at(2) == "c");
+  b.pop_back();
+  assert(b.at(2).empty());
+  assert(!b.at(1).empty());
+  b.clear();
+  assert(b.at(1).empty());
+  assert(b.at(0).empty());
+}
+
+static void test_inline_simple() {
+  ivec::InlineVector<int, 3> v;
+  const ivec::InlineVector<int, 3>& cv = v;
+  assert(v.size() == 0);
+  assert(v.empty());
+
+  v.push_back(1);
+  assert(v.size() == 1);
+  assert(v[0] == 1);
+  assert(cv[0] == 1);
+  assert(v.front() == 1);
+  assert(cv.front() == 1);
+  assert(v.data()[0] == 1);
+  assert(!v.empty());
+
+  {
+    std::vector<int> found;
+    for (auto x : v) found.push_back(x);
+    assert(found == std::vector<int>{1});
+  }
+  {
+    std::vector<int> found;
+    for (auto x : cv) found.push_back(x);
+    assert(found == std::vector<int>{1});
+  }
+  {
+    std::vector<int> found;
+    for (auto it = v.rbegin(); it != v.rend(); ++it) {
+      found.push_back(*it);
+    }
+    assert(found == std::vector<int>{1});
+  }
+  {
+    std::vector<int> found;
+    for (auto it = cv.rbegin(); it != cv.rend(); ++it) {
+      found.push_back(*it);
+    }
+    assert(found == std::vector<int>{1});
+  }
+
+
+  v.push_back(2);
+  assert(v.size() == 2);
+
+  v.push_back(3);
+  assert(v.back() == 3);
+  assert(cv.back() == 3);
+  assert(v.size() == 3);
+  v.push_back(4);
+  assert(v.size() == 4);
+  assert(v[0] == 1);
+  assert(cv[0] == 1);
+  assert(v[1] == 2);
+  assert(v[2] == 3);
+  assert(v[3] == 4);
+  assert(v.front() == 1);
+  assert(cv.front() == 1);
+  assert(v.back() == 4);
+  assert(cv.back() == 4);
+  assert(v.data()[0] == 1);
+  assert(cv.data()[3] == 4);
+  assert(cv.data()[3] == 4);
+
+  {
+    std::vector<int> found;
+    for (auto x : v) found.push_back(x);
+    assert(found == (std::vector<int>{1, 2, 3, 4}));
+  }
+  {
+    std::vector<int> found;
+    for (auto x : cv) found.push_back(x);
+    assert(found == (std::vector<int>{1, 2, 3, 4}));
+  }
+  {
+    std::vector<int> found;
+    for (auto it = v.rbegin(); it != v.rend(); ++it) {
+      found.push_back(*it);
+    }
+    assert(found == (std::vector<int>{4, 3, 2, 1}));
+  }
+  {
+    std::vector<int> found;
+    for (auto it = cv.rbegin(); it != cv.rend(); ++it) {
+      found.push_back(*it);
+    }
+    assert(found == (std::vector<int>{4, 3, 2, 1}));
+  }
+
+  assert(!v.empty());
+
+  assert(!v.is_inlined());
+  assert(v.capacity() >= 4);
+  size_t old_capacity = v.capacity();
+  v.clear();
+  assert(v.empty());
+  assert(v.capacity() == old_capacity);
+
+  v.push_back(100);
+  v.push_back(101);
+  v.push_back(102);
+  v.push_back(103);
+  v.pop_back();
 }
 
 int main() {
@@ -184,5 +345,6 @@ int main() {
   test_fixed_access();
   test_fixed_iterator();
   test_fixed_compare();
-  test_clear();
+  test_fixed_clear();
+  test_inline_simple();
 }
